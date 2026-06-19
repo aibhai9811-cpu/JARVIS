@@ -1,2 +1,0 @@
-# JARVIS
-My Personal Assistant 
