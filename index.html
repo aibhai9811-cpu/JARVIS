@@ -269,7 +269,7 @@
 </div>
 
 <div id="reactor-section">
-  <div id="reactor">
+  <div id="reactor" onclick="interruptSpeaking()" style="cursor:pointer">
     <div class="r-glow" id="r-glow"></div>
     <div class="r-ring" id="r-ring0" style="inset:0"></div>
     <div class="r-ring" id="r-ring1" style="inset:9px"></div>
@@ -277,6 +277,7 @@
     <div id="r-core"></div>
     <div id="r-label">STANDBY</div>
   </div>
+  <div id="tap-to-stop-hint" style="display:none;text-align:center;margin-top:30px;font-size:8.5px;letter-spacing:1.5px;color:rgba(255,80,80,0.5)">TAP CIRCLE TO INTERRUPT</div>
 
   <div id="wavebars">
     <div class="bargroup" id="bars-listen"></div>
@@ -473,6 +474,10 @@ function setState(s) {
   const statusMap = { idle:'ALL SYSTEMS NOMINAL', listening:'VOICE INPUT ACTIVE', thinking:'PROCESSING QUERY...', speaking:'AUDIO OUTPUT ACTIVE' };
   document.getElementById('status').textContent = statusMap[s];
 
+  // show "tap to interrupt" hint only while speaking
+  const hint = document.getElementById('tap-to-stop-hint');
+  if (hint) hint.style.display = (s === 'speaking') ? 'block' : 'none';
+
   // mic button
   const micBtn = document.getElementById('mic-btn');
   const micRing = document.getElementById('mic-ring');
@@ -512,12 +517,15 @@ function getPreferredVoice() {
       || null;
 }
 
+let activeUtteranceResumeFlag = false; // tracks whether the currently-speaking utterance should resume wake word once stopped
+
 function speak(text, resumeWakeAfter) {
   if (!voiceOn) {
     if (resumeWakeAfter) resumeWakeWord();
     return;
   }
   speechSynthesis.cancel();
+  activeUtteranceResumeFlag = !!resumeWakeAfter;
   const doSpeak = () => {
     const utter = new SpeechSynthesisUtterance(text);
     utter.rate   = 0.9;
@@ -532,6 +540,14 @@ function speak(text, resumeWakeAfter) {
   };
   if (voiceReady) doSpeak();
   else setTimeout(doSpeak, 700);
+}
+
+/* ── INTERRUPT — tap the reactor while SARASWATI is speaking to silence her instantly ── */
+function interruptSpeaking() {
+  if (appState !== 'speaking') return; // only act while actually speaking
+  speechSynthesis.cancel();
+  setState('idle');
+  if (activeUtteranceResumeFlag) resumeWakeWord();
 }
 
 /* ── VOICE TOGGLE ── */
@@ -588,135 +604,90 @@ function startWakeWordMode() {
   });
 }
 
+function processCompleteSentence(rawTranscript) {
+  const transcript = rawTranscript.toLowerCase().trim();
+  if (!transcript) return;
+
+  // ── Check for EXIT first (works in conversation mode) ──
+  const wantsExit = EXIT_WORDS.some(w => transcript.includes(w));
+  if (conversationMode && wantsExit) {
+    conversationMode = false;
+    updateWakeIndicator();
+    wakeWordPaused = true;
+    try { wakeRecognition?.abort(); } catch(e){}
+    speak("Going to sleep. Say Hey Saraswati to wake me again.", true);
+    return;
+  }
+
+  // ── If already in conversation mode, treat full sentence as a command (no wake word needed) ──
+  if (conversationMode) {
+    wakeWordPaused = true;
+    try { wakeRecognition?.abort(); } catch(e){}
+    send(transcript);
+    return; // resumeWakeWord() is called after speak() finishes, inside send()
+  }
+
+  // ── Otherwise, check for wake word to ENTER conversation mode ──
+  const heard = WAKE_WORDS.some(w => transcript.includes(w));
+  if (heard) {
+    let command = transcript;
+    WAKE_WORDS.forEach(w => { command = command.replace(w, ''); });
+    command = command.trim();
+
+    conversationMode = true;
+    updateWakeIndicator();
+    wakeWordPaused = true;
+    try { wakeRecognition?.abort(); } catch(e){}
+
+    if (command.length > 2) {
+      // They said the wake word + full command in one breath — send directly
+      send(command);
+    } else {
+      // Just the wake word alone — acknowledge and keep listening continuously
+      speak("Yes, I'm listening.", true);
+    }
+  }
+  // If neither exit nor wake word heard, and not in conversation mode, just ignore and keep idle-listening
+}
+
 function launchWakeRecognition() {
+  // SINGLE-SHOT pattern (continuous:false) — far more reliable on mobile Chrome.
+  // Each recognition instance captures ONE finalized utterance, then we immediately
+  // start a brand-new instance. This guarantees zero possibility of duplicated/growing
+  // transcripts, since every session starts with a completely empty results array.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const r = new SR();
   r.lang = 'en-US';
-  r.continuous = true;
-  r.interimResults = true;
+  r.continuous = false;
+  r.interimResults = false;
+  r.maxAlternatives = 1;
 
-  r.onstart = () => {
-    wakeWordActive = true;
-    updateWakeIndicator();
-    finalizedSoFar = '';
-    lastFinalizedIndex = -1;
-    pendingTranscript = '';
-  };
-
-  let pendingTranscript = '';
-  let silenceTimer = null;
-  const SILENCE_WAIT_MS = 1100; // wait this long after last speech fragment before treating sentence as complete
-
-  function processCompleteSentence(transcript) {
-    transcript = transcript.toLowerCase().trim();
-    if (!transcript) return;
-
-    // ── Check for EXIT first (works in conversation mode) ──
-    const wantsExit = EXIT_WORDS.some(w => transcript.includes(w));
-    if (conversationMode && wantsExit) {
-      conversationMode = false;
-      updateWakeIndicator();
-      wakeWordPaused = true;
-      try { wakeRecognition.stop(); } catch(e){}
-      speak("Going to sleep. Say Hey Saraswati to wake me again.", true);
-      return;
-    }
-
-    // ── If already in conversation mode, treat full sentence as a command (no wake word needed) ──
-    if (conversationMode) {
-      wakeWordPaused = true;
-      try { wakeRecognition.stop(); } catch(e){}
-      send(transcript);
-      return; // resumeWakeWord() is called after speak() finishes, inside send()
-    }
-
-    // ── Otherwise, check for wake word to ENTER conversation mode ──
-    const heard = WAKE_WORDS.some(w => transcript.includes(w));
-    if (heard) {
-      let command = transcript;
-      WAKE_WORDS.forEach(w => { command = command.replace(w, ''); });
-      command = command.trim();
-
-      conversationMode = true;
-      updateWakeIndicator();
-      wakeWordPaused = true;
-      try { wakeRecognition.stop(); } catch(e){}
-
-      if (command.length > 2) {
-        // They said the wake word + full command in one breath — send directly
-        send(command);
-      } else {
-        // Just the wake word alone — acknowledge and keep listening continuously
-        speak("Yes, I'm listening.", true);
-      }
-    }
-  }
-
-  let finalizedSoFar = ''; // accumulated text from finalized result chunks only (never re-added)
-  let lastFinalizedIndex = -1; // highest e.results index we've already locked in as final
+  r.onstart = () => { wakeWordActive = true; updateWakeIndicator(); };
 
   r.onresult = (e) => {
     if (wakeWordPaused) return;
-
-    let interimText = '';
-
-    for (let i = 0; i < e.results.length; i++) {
-      const result = e.results[i];
-      if (result.isFinal) {
-        // Only append a finalized chunk ONE time, the first time we see it finalized
-        if (i > lastFinalizedIndex) {
-          finalizedSoFar += result[0].transcript + ' ';
-          lastFinalizedIndex = i;
-        }
-      } else {
-        // Interim (still-being-spoken) text — always replace, never accumulate
-        interimText += result[0].transcript + ' ';
-      }
-    }
-
-    pendingTranscript = (finalizedSoFar + interimText).trim();
-
-    // Reset the silence timer every time new speech comes in —
-    // only treat the sentence as "done" once the person actually pauses
-    clearTimeout(silenceTimer);
-    silenceTimer = setTimeout(() => {
-      const finalText = pendingTranscript;
-      pendingTranscript = '';
-      finalizedSoFar = '';
-      lastFinalizedIndex = -1;
-      processCompleteSentence(finalText);
-    }, SILENCE_WAIT_MS);
+    // With continuous=false, there will only ever be exactly one result —
+    // the final, complete utterance. No accumulation, no duplication possible.
+    const transcript = e.results[0][0].transcript;
+    processCompleteSentence(transcript);
   };
 
   r.onerror = (e) => {
     wakeWordActive = false;
-    clearTimeout(silenceTimer);
-    pendingTranscript = '';
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
       micStatus = 'denied';
       return; // don't retry if permission denied
     }
-    // network/no-speech/aborted — restart after short delay
-    setTimeout(()=>{ if (!wakeWordPaused) launchWakeRecognition(); }, 1000);
+    // 'no-speech' fires constantly in idle listening — this is expected and fine, just restart
+    if (!wakeWordPaused) setTimeout(()=>{ launchWakeRecognition(); }, 300);
   };
 
   r.onend = () => {
     wakeWordActive = false;
-    clearTimeout(silenceTimer);
     updateWakeIndicator();
-
-    // If the browser ended the session while we still had unprocessed speech
-    // (e.g. it cut off mid-sentence), process whatever was captured instead of losing it
-    if (pendingTranscript && pendingTranscript.length > 1 && !wakeWordPaused) {
-      const leftover = pendingTranscript;
-      pendingTranscript = '';
-      processCompleteSentence(leftover);
-      return; // processCompleteSentence already manages pause/resume as needed
-    }
-
-    // auto-restart unless we're intentionally paused (mid-command) or mic explicitly stopped
+    // Immediately restart listening unless we're intentionally paused (mid-command/speaking)
     if (!wakeWordPaused && appState !== 'listening' && appState !== 'thinking') {
-      setTimeout(()=>{ launchWakeRecognition(); }, 400);
+      setTimeout(()=>{ launchWakeRecognition(); }, 250);
     }
   };
 
