@@ -651,25 +651,31 @@ function processCompleteSentence(rawTranscript) {
 }
 
 function launchWakeRecognition() {
-  // SINGLE-SHOT pattern (continuous:false) — far more reliable on mobile Chrome.
-  // Each recognition instance captures ONE finalized utterance, then we immediately
-  // start a brand-new instance. This guarantees zero possibility of duplicated/growing
-  // transcripts, since every session starts with a completely empty results array.
+  // CONTINUOUS pattern — keeps ONE persistent mic session open (no restart spam,
+  // no repeated "microphone is on" notification sound). We use e.resultIndex,
+  // the browser's own official marker of "where new results begin in this event",
+  // to correctly grab only the freshly-finalized phrase — never anything already processed.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const r = new SR();
   r.lang = 'en-US';
-  r.continuous = false;
-  r.interimResults = false;
+  r.continuous = true;
+  r.interimResults = false; // we only care about finalized phrases, not partial guesses
   r.maxAlternatives = 1;
 
   r.onstart = () => { wakeWordActive = true; updateWakeIndicator(); };
 
   r.onresult = (e) => {
     if (wakeWordPaused) return;
-    // With continuous=false, there will only ever be exactly one result —
-    // the final, complete utterance. No accumulation, no duplication possible.
-    const transcript = e.results[0][0].transcript;
-    processCompleteSentence(transcript);
+    // e.resultIndex tells us exactly which NEW result(s) arrived in this event —
+    // everything before it was already handled in a previous onresult call.
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const result = e.results[i];
+      if (result.isFinal) {
+        const transcript = result[0].transcript;
+        processCompleteSentence(transcript);
+        if (wakeWordPaused) break; // processCompleteSentence may have paused us — stop processing further results
+      }
+    }
   };
 
   r.onerror = (e) => {
@@ -678,16 +684,16 @@ function launchWakeRecognition() {
       micStatus = 'denied';
       return; // don't retry if permission denied
     }
-    // 'no-speech' fires constantly in idle listening — this is expected and fine, just restart
-    if (!wakeWordPaused) setTimeout(()=>{ launchWakeRecognition(); }, 300);
+    // 'no-speech' / 'aborted' can happen occasionally — restart the persistent session
+    if (!wakeWordPaused) setTimeout(()=>{ launchWakeRecognition(); }, 500);
   };
 
   r.onend = () => {
     wakeWordActive = false;
     updateWakeIndicator();
-    // Immediately restart listening unless we're intentionally paused (mid-command/speaking)
+    // Only restart if we didn't intentionally pause it (e.g. mid-command, speaking, or user said stop)
     if (!wakeWordPaused && appState !== 'listening' && appState !== 'thinking') {
-      setTimeout(()=>{ launchWakeRecognition(); }, 250);
+      setTimeout(()=>{ launchWakeRecognition(); }, 400);
     }
   };
 
