@@ -650,11 +650,15 @@ function processCompleteSentence(rawTranscript) {
   // If neither exit nor wake word heard, and not in conversation mode, just ignore and keep idle-listening
 }
 
+let lastHeardTranscript = '';
+let lastHeardTime = 0;
+const DUPLICATE_GUARD_MS = 2500; // ignore an identical transcript repeated within this window
+
 function launchWakeRecognition() {
-  // CONTINUOUS pattern — keeps ONE persistent mic session open (no restart spam,
-  // no repeated "microphone is on" notification sound). We use e.resultIndex,
-  // the browser's own official marker of "where new results begin in this event",
-  // to correctly grab only the freshly-finalized phrase — never anything already processed.
+  // Android Chrome auto-stops continuous recognition after a few seconds of silence
+  // regardless of continuous:true, and replays its last buffered result on stop.
+  // We defend against both symptoms: (1) duplicate-transcript guard below, and
+  // (2) a minimum cooldown between restarts so the "mic on" chime can't rapid-fire.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const r = new SR();
   r.lang = 'en-US';
@@ -666,12 +670,21 @@ function launchWakeRecognition() {
 
   r.onresult = (e) => {
     if (wakeWordPaused) return;
-    // e.resultIndex tells us exactly which NEW result(s) arrived in this event —
-    // everything before it was already handled in a previous onresult call.
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const result = e.results[i];
       if (result.isFinal) {
-        const transcript = result[0].transcript;
+        const transcript = result[0].transcript.toLowerCase().trim();
+        const now = Date.now();
+
+        // Ignore exact-duplicate phrase if heard again within the guard window —
+        // this is almost always the engine replaying its buffer on a silent restart,
+        // not genuinely repeated speech from the person.
+        if (transcript === lastHeardTranscript && (now - lastHeardTime) < DUPLICATE_GUARD_MS) {
+          continue;
+        }
+        lastHeardTranscript = transcript;
+        lastHeardTime = now;
+
         processCompleteSentence(transcript);
         if (wakeWordPaused) break; // processCompleteSentence may have paused us — stop processing further results
       }
@@ -684,8 +697,9 @@ function launchWakeRecognition() {
       micStatus = 'denied';
       return; // don't retry if permission denied
     }
-    // 'no-speech' / 'aborted' can happen occasionally — restart the persistent session
-    if (!wakeWordPaused) setTimeout(()=>{ launchWakeRecognition(); }, 500);
+    // 'no-speech' fires very frequently during idle listening on Android — this is normal.
+    // Restart, but with a real cooldown so it can't rapid-fire the "mic on" chime.
+    if (!wakeWordPaused) setTimeout(()=>{ launchWakeRecognition(); }, 1200);
   };
 
   r.onend = () => {
@@ -693,7 +707,7 @@ function launchWakeRecognition() {
     updateWakeIndicator();
     // Only restart if we didn't intentionally pause it (e.g. mid-command, speaking, or user said stop)
     if (!wakeWordPaused && appState !== 'listening' && appState !== 'thinking') {
-      setTimeout(()=>{ launchWakeRecognition(); }, 400);
+      setTimeout(()=>{ launchWakeRecognition(); }, 1200);
     }
   };
 
