@@ -595,7 +595,13 @@ function launchWakeRecognition() {
   r.continuous = true;
   r.interimResults = true;
 
-  r.onstart = () => { wakeWordActive = true; updateWakeIndicator(); };
+  r.onstart = () => {
+    wakeWordActive = true;
+    updateWakeIndicator();
+    finalizedSoFar = '';
+    lastFinalizedIndex = -1;
+    pendingTranscript = '';
+  };
 
   let pendingTranscript = '';
   let silenceTimer = null;
@@ -646,15 +652,29 @@ function launchWakeRecognition() {
     }
   }
 
+  let finalizedSoFar = ''; // accumulated text from finalized result chunks only (never re-added)
+  let lastFinalizedIndex = -1; // highest e.results index we've already locked in as final
+
   r.onresult = (e) => {
     if (wakeWordPaused) return;
 
-    // Build the running transcript from all results in this recognition session
-    let combined = '';
+    let interimText = '';
+
     for (let i = 0; i < e.results.length; i++) {
-      combined += e.results[i][0].transcript + ' ';
+      const result = e.results[i];
+      if (result.isFinal) {
+        // Only append a finalized chunk ONE time, the first time we see it finalized
+        if (i > lastFinalizedIndex) {
+          finalizedSoFar += result[0].transcript + ' ';
+          lastFinalizedIndex = i;
+        }
+      } else {
+        // Interim (still-being-spoken) text — always replace, never accumulate
+        interimText += result[0].transcript + ' ';
+      }
     }
-    pendingTranscript = combined.trim();
+
+    pendingTranscript = (finalizedSoFar + interimText).trim();
 
     // Reset the silence timer every time new speech comes in —
     // only treat the sentence as "done" once the person actually pauses
@@ -662,6 +682,8 @@ function launchWakeRecognition() {
     silenceTimer = setTimeout(() => {
       const finalText = pendingTranscript;
       pendingTranscript = '';
+      finalizedSoFar = '';
+      lastFinalizedIndex = -1;
       processCompleteSentence(finalText);
     }, SILENCE_WAIT_MS);
   };
