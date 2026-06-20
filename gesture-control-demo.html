@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Hand Gesture Control — Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#15120F; --panel:#1F1A16; --panel-2:#241E18;
+    --accent:#FF7A2E; --line:#E8E1D6; --text:#F4F0E8; --muted:#8A8276;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:'Space Grotesk',sans-serif;-webkit-tap-highlight-color:transparent;}
+  .app{max-width:480px;margin:0 auto;padding:18px 16px 50px;}
+  header h1{font-size:20px;font-weight:700;margin:0;}
+  header p{font-size:13px;color:var(--muted);margin:4px 0 0;}
+
+  .viewfinder{position:relative;width:100%;aspect-ratio:3/4;background:#000;
+    border-radius:18px;overflow:hidden;margin-top:16px;}
+  #video{display:none;}
+  #canvas{width:100%;height:100%;object-fit:cover;display:block;}
+
+  .bracket{position:absolute;width:28px;height:28px;border-color:var(--line);
+    opacity:.7;transition:border-color .25s,opacity .25s;}
+  .bracket.tl{top:14px;left:14px;border-top:3px solid;border-left:3px solid;border-radius:6px 0 0 0;}
+  .bracket.tr{top:14px;right:14px;border-top:3px solid;border-right:3px solid;border-radius:0 6px 0 0;}
+  .bracket.bl{bottom:14px;left:14px;border-bottom:3px solid;border-left:3px solid;border-radius:0 0 0 6px;}
+  .bracket.br{bottom:14px;right:14px;border-bottom:3px solid;border-right:3px solid;border-radius:0 0 6px 0;}
+  .viewfinder.confirmed .bracket{border-color:var(--accent);opacity:1;}
+  .viewfinder.confirmed{box-shadow:0 0 0 2px var(--accent) inset;transition:box-shadow .15s;}
+
+  .readout{position:absolute;left:0;right:0;bottom:0;padding:10px 14px 12px;
+    background:linear-gradient(to top,rgba(0,0,0,.78),transparent);}
+  #gestureName{font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:.04em;color:var(--line);}
+  .holdbar{height:3px;background:rgba(255,255,255,.18);border-radius:2px;margin-top:7px;overflow:hidden;}
+  .holdbar-fill{height:100%;width:0%;background:var(--accent);}
+
+  .start-btn{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    background:var(--accent);color:#1a1208;border:none;padding:14px 24px;border-radius:30px;
+    font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;cursor:pointer;
+    box-shadow:0 4px 16px rgba(0,0,0,.4);}
+  .loading-msg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--line);text-align:center;
+    width:80%;line-height:1.5;}
+
+  .player{background:var(--panel);border-radius:16px;padding:16px;margin-top:16px;}
+  .player-row{display:flex;justify-content:space-between;align-items:center;}
+  .track-title{font-weight:600;font-size:16px;}
+  .track-sub{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);
+    text-transform:uppercase;letter-spacing:.06em;margin-top:2px;}
+  .play-icon{font-size:20px;width:44px;height:44px;border-radius:50%;background:var(--panel-2);
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .volume-row{display:flex;align-items:center;gap:10px;margin-top:16px;}
+  .vol-label{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);}
+  .vol-bars{display:flex;gap:3px;flex:1;}
+  .vol-bar{height:14px;flex:1;background:var(--panel-2);border-radius:2px;}
+  .vol-bar.on{background:var(--accent);}
+
+  section.legend h2,section.log h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--muted);margin:26px 0 10px;font-weight:600;}
+  .legend-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .legend-item{display:flex;gap:10px;align-items:center;background:var(--panel);border-radius:12px;padding:10px;}
+  .legend-item .emoji{font-size:19px;}
+  .legend-item b{display:block;font-size:13px;}
+  .legend-item small{display:block;color:var(--muted);font-size:10.5px;font-family:'JetBrains Mono',monospace;margin-top:1px;}
+
+  #logList{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:6px;min-height:34px;}
+  #logList li{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--line);
+    background:var(--panel);padding:8px 12px;border-radius:8px;}
+  #logList:empty::after{content:"No gestures yet — try an open palm.";color:var(--muted);
+    font-family:'JetBrains Mono',monospace;font-size:12px;}
+
+  footer{margin-top:30px;font-size:11px;color:var(--muted);line-height:1.6;}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Hand Gesture Control</h1>
+    <p>On-device hand tracking — nothing leaves your phone.</p>
+  </header>
+
+  <div class="viewfinder" id="viewfinder">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="canvas"></canvas>
+    <div class="bracket tl"></div><div class="bracket tr"></div>
+    <div class="bracket bl"></div><div class="bracket br"></div>
+    <div class="readout">
+      <span id="gestureName">—</span>
+      <div class="holdbar"><div class="holdbar-fill" id="holdFill"></div></div>
+    </div>
+    <button id="startBtn" class="start-btn">▶ Tap to start camera</button>
+    <div id="loadingMsg" class="loading-msg" hidden>Loading model…</div>
+  </div>
+
+  <section class="player">
+    <div class="player-row">
+      <div>
+        <div class="track-title" id="trackTitle">—</div>
+        <div class="track-sub">Now playing</div>
+      </div>
+      <div class="play-icon" id="playIcon">⏸</div>
+    </div>
+    <div class="volume-row">
+      <span class="vol-label">VOL</span>
+      <div class="vol-bars" id="volBars"></div>
+    </div>
+  </section>
+
+  <section class="legend">
+    <h2>Gestures</h2>
+    <div class="legend-grid">
+      <div class="legend-item"><span class="emoji">🖐️</span><div><b>Open palm</b><small>Play</small></div></div>
+      <div class="legend-item"><span class="emoji">✊</span><div><b>Closed fist</b><small>Pause</small></div></div>
+      <div class="legend-item"><span class="emoji">👍</span><div><b>Thumbs up</b><small>Volume +</small></div></div>
+      <div class="legend-item"><span class="emoji">👎</span><div><b>Thumbs down</b><small>Volume −</small></div></div>
+      <div class="legend-item"><span class="emoji">✌️</span><div><b>Peace sign</b><small>Next track</small></div></div>
+      <div class="legend-item"><span class="emoji">☝️</span><div><b>Point up</b><small>Previous track</small></div></div>
+    </div>
+  </section>
+
+  <section class="log">
+    <h2>Activity</h2>
+    <ul id="logList"></ul>
+  </section>
+
+  <footer>Hold a gesture steady for about half a second to trigger it. Must be opened over HTTPS (e.g. GitHub Pages) — camera access is blocked on plain local files.</footer>
+</div>
+
+<script type="module">
+import { GestureRecognizer, FilesetResolver, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],
+  [0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],
+  [5,9],[9,13],[13,17]
+];
+
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const startBtn = document.getElementById('startBtn');
+const loadingMsg = document.getElementById('loadingMsg');
+const viewfinder = document.getElementById('viewfinder');
+const gestureNameEl = document.getElementById('gestureName');
+const holdFill = document.getElementById('holdFill');
+const trackTitle = document.getElementById('trackTitle');
+const playIcon = document.getElementById('playIcon');
+const volBarsEl = document.getElementById('volBars');
+const logList = document.getElementById('logList');
+
+const tracks = ["Deep Focus — 40Hz", "Morning Momentum", "Flow State", "Night Shift Calm", "Wake & Build"];
+let trackIndex = 0, playing = true, volume = 60, liked = false;
+
+let gestureRecognizer, drawingUtils;
+let lastVideoTime = -1;
+let currentGesture = "None", gestureStartTime = 0, fired = false;
+const HOLD_MS = 550;
+const CONFIDENCE_MIN = 0.6;
+
+function renderVolume(){
+  volBarsEl.innerHTML = '';
+  const segments = 10;
+  const active = Math.round((volume/100)*segments);
+  for(let i=0;i<segments;i++){
+    const bar = document.createElement('div');
+    bar.className = 'vol-bar' + (i<active ? ' on':'');
+    volBarsEl.appendChild(bar);
+  }
+}
+function renderPlayer(){
+  trackTitle.textContent = tracks[trackIndex];
+  playIcon.textContent = playing ? '⏸' : '▶';
+  renderVolume();
+}
+function logAction(text){
+  const li = document.createElement('li');
+  li.textContent = text;
+  logList.prepend(li);
+  while(logList.children.length > 5) logList.removeChild(logList.lastChild);
+}
+function confirmPulse(){
+  viewfinder.classList.add('confirmed');
+  setTimeout(()=>viewfinder.classList.remove('confirmed'), 350);
+}
+
+const actions = {
+  Open_Palm:   () => { playing = true; logAction('🖐️ Open palm → Play'); },
+  Closed_Fist: () => { playing = false; logAction('✊ Fist → Pause'); },
+  Thumb_Up:    () => { volume = Math.min(100, volume+10); logAction('👍 Thumbs up → Volume +10'); },
+  Thumb_Down:  () => { volume = Math.max(0, volume-10); logAction('👎 Thumbs down → Volume −10'); },
+  Victory:     () => { trackIndex = (trackIndex+1)%tracks.length; logAction('✌️ Peace → Next track'); },
+  Pointing_Up: () => { trackIndex = (trackIndex-1+tracks.length)%tracks.length; logAction('☝️ Point up → Previous track'); },
+  ILoveYou:    () => { liked = !liked; logAction(liked ? '🤟 → Liked ❤️' : '🤟 → Unliked'); }
+};
+
+async function init(){
+  startBtn.hidden = true;
+  loadingMsg.hidden = false;
+  loadingMsg.textContent = "Loading model…";
+
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+  );
+  gestureRecognizer = await GestureRecognizer.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
+      delegate: "GPU"
+    },
+    runningMode: "VIDEO",
+    numHands: 1
+  });
+  drawingUtils = new DrawingUtils(ctx);
+
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+  video.srcObject = stream;
+  await video.play();
+
+  video.addEventListener('loadeddata', () => {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    loadingMsg.hidden = true;
+    requestAnimationFrame(predictWebcam);
+  }, { once:true });
+}
+
+function predictWebcam(){
+  if (video.currentTime !== lastVideoTime){
+    lastVideoTime = video.currentTime;
+    const results = gestureRecognizer.recognizeForVideo(video, performance.now());
+
+    ctx.save();
+    ctx.scale(-1,1);
+    ctx.translate(-canvas.width,0);
+    ctx.drawImage(video,0,0,canvas.width,canvas.height);
+
+    let detected = "None", score = 0;
+    if (results.landmarks && results.landmarks.length){
+      for (const lm of results.landmarks){
+        drawingUtils.drawConnectors(lm, HAND_CONNECTIONS, { color: "#E8E1D6", lineWidth: 3 });
+        drawingUtils.drawLandmarks(lm, { color: "#FF7A2E", lineWidth: 1, radius: 3 });
+      }
+    }
+    if (results.gestures && results.gestures.length){
+      const top = results.gestures[0][0];
+      detected = top.categoryName;
+      score = top.score;
+    }
+    ctx.restore();
+    handleGesture(detected, score);
+  }
+  requestAnimationFrame(predictWebcam);
+}
+
+function handleGesture(detected, score){
+  const valid = detected !== "None" && score > CONFIDENCE_MIN;
+  const label = valid ? detected : "None";
+
+  if (label !== currentGesture){
+    currentGesture = label;
+    gestureStartTime = performance.now();
+    fired = false;
+  }
+
+  const held = performance.now() - gestureStartTime;
+  const pct = label === "None" ? 0 : Math.min(100, (held/HOLD_MS)*100);
+  holdFill.style.width = pct + '%';
+  gestureNameEl.textContent = label === "None"
+    ? "no gesture"
+    : label.replace('_',' ') + ` (${Math.round(score*100)}%)`;
+
+  if (label !== "None" && held >= HOLD_MS && !fired){
+    fired = true;
+    if (actions[label]){
+      actions[label]();
+      renderPlayer();
+      confirmPulse();
+    }
+  }
+}
+
+startBtn.addEventListener('click', () => {
+  init().catch(err => {
+    loadingMsg.hidden = false;
+    loadingMsg.textContent = "Couldn't start: " + err.message + " — make sure this page is served over HTTPS and camera permission is allowed.";
+  });
+});
+
+renderPlayer();
+</script>
+</body>
+</html>
