@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Camera Test</title>
+<style>
+  body{background:#111;color:#fff;font-family:sans-serif;text-align:center;padding:20px;}
+  video{width:100%;max-width:400px;border-radius:12px;background:#000;margin-top:12px;}
+  button{padding:14px 24px;font-size:16px;border-radius:30px;border:none;background:#FF7A2E;color:#111;font-weight:bold;}
+  #status{font-family:monospace;font-size:13px;white-space:pre-wrap;text-align:left;
+    background:#222;padding:12px;border-radius:8px;margin-top:16px;min-height:20px;}
+</style>
+</head>
+<body>
+  <h2>Camera Test</h2>
+  <button id="btn">Test Camera</button>
+  <video id="v" autoplay playsinline muted></video>
+  <div id="status">Tap the button above.</div>
+
+<script>
+  const btn = document.getElementById('btn');
+  const v = document.getElementById('v');
+  const status = document.getElementById('status');
+
+  btn.onclick = async () => {
+    status.textContent = "Requesting camera...";
+    const t0 = Date.now();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      v.srcObject = stream;
+      status.textContent = "SUCCESS in " + (Date.now() - t0) + "ms";
+    } catch (e) {
+      status.textContent = "ERROR after " + (Date.now() - t0) + "ms\nname: " + e.name + "\nmessage: " + e.message;
+    }
+  };
+</script>
+</body>
+</html>
